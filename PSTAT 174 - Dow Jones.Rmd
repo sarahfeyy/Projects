@@ -1,0 +1,392 @@
+---
+title: "Pstat 174 Project"
+author: ' '
+date: "3/8/2019"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Importing Dow Data
+dat<-read.csv("DJIA.csv")
+
+# View first 6 observation on Dow Data
+head(dat)
+dat$DJIA<-as.numeric(dat$DJIA)
+
+#Removing Missing Values
+dow = dat[!dat$DJIA == 1,]
+
+set.seed(123)
+# Testing set, Training set 
+test.ind <- sample.int(n = nrow(dow), size = floor(0.1*nrow(dow))) 
+train.ind <- setdiff(1:nrow(dow), test.ind) 
+dowTrain <- dow[train.ind,] 
+dowTest <- dow[test.ind,]
+```
+
+```{r}
+ind= seq(as.Date("2014-01-02"), as.Date("2019-01-01"), by= "day")
+dow.ts<-ts(dowTrain$DJIA, start=c(2014,as.numeric(format(ind[1], "%j"))), frequency=260)
+ts.plot(dow.ts, ylab = "DJIA", main = "Dow Time Series Plot")
+# Variance Check
+var(dow.ts)
+```
+
+```{r}
+# plot acf and pacf
+op = par(mfrow = c(1,2)) 
+acf(dow.ts,lag.max = 60,main = "") 
+pacf(dow.ts,lag.max = 60,main = "") 
+title(expression(paste("ACF and PACF for Dow Jones", sep = " ")), line = -1, outer=TRUE)
+
+# Decomposition
+decompose_dow <- decompose(dow.ts, type="multiplicative")
+plot(decompose_dow)
+```
+
+
+
+
+Find the optimal differencing for original non transformed data
+```{r}
+# Difference lag 365 to remove seasonality
+dat.ts.diff365<-diff(dow.ts,lag=365)
+plot.ts(dat.ts.diff365, main= expression(nabla[365]~Y[t]))
+original_var= var(dow.ts)
+diff365_var= var(dat.ts.diff365)
+diff365_var > original_var # Is FALSE thus we continue
+
+
+# Don't need to do this yet, gotta finish differencing first
+# plot acf and pacf
+# op = par(mfrow = c(1,2)) 
+# acf(dat.ts.diff365,lag.max = 60,main = "") 
+# pacf(dat.ts.diff365,lag.max = 60,main = "") 
+
+# Difference lag 91 to remove seasonality
+dat.ts.diff91<-diff(dat.ts.diff365,lag=91)
+plot.ts(dat.ts.diff91, main= expression(nabla[91]~nabla[365]~Y[t]))
+diff91_var= var(dat.ts.diff91)
+diff91_var > diff365_var # Is TRUE thus we do not difference here
+
+# Difference lag 12
+dat.ts.diff12<-diff(dat.ts.diff365,lag=12)
+plot.ts(dat.ts.diff12, main= expression(nabla[12]~nabla[365]~Y[t]))
+diff12_var=var(dat.ts.diff12)
+diff12_var > diff365_var # Is FALSE thus we continue
+
+# Difference lag 7
+dat.ts.diff7<-diff(dat.ts.diff12,lag=7)
+plot.ts(dat.ts.diff7, main= expression(nabla[7]~nabla[12]~nabla[365]~Y[t]))
+diff7_var=var(dat.ts.diff7)
+diff7_var > diff12_var # Is TRUE thus we do not difference at 7
+
+# Difference lag 1
+dat.ts.diff1<-diff(dat.ts.diff12,lag=1)
+plot.ts(dat.ts.diff1, main= expression(nabla[1]~nabla[12]~nabla[365]~Y[t]))
+diff1_var=var(dat.ts.diff1)
+diff1_var > diff12_var # Is FALSE thus we continue
+
+# Decomposition
+decompose_dow <- decompose(dat.ts.diff1, type="multiplicative")
+plot(decompose_dow)
+
+
+# Variance increases so stop here and use dat.ts.diff1 to continue
+
+qqnorm(dat.ts.diff1)
+qqline(dat.ts.diff1)
+
+y.original.clean<-dat.ts.diff1
+cbind(original_var, diff365_var,diff91_var, diff12_var, diff1_var)
+```
+
+
+
+
+
+```{r}
+par(mfrow=c(1,2))
+# Check Stationary assumptions
+par(mfrow = c(1,2))
+acf(y.original.clean, lag.max =20, main = " ")
+pacf(y.original.clean, lag.max = 20, main = " ")
+title(expression(paste("ACF and PACF for Dow Jones", sep = " ")), line = -1, outer=TRUE)
+ts.plot(y.original.clean)
+```
+The ACF plot has most lag values within the our confidence interval. But the data has exponentially increasing variance, thus we will apply a transformation to our data.
+
+```{r}
+# BoxCox Transformation
+library(MASS) 
+t = 1:length(dowTrain$DATE) 
+fit = lm(dowTrain$DJIA ~ t) 
+bcTransform = boxcox(dowTrain$DJIA ~ t,plotit = TRUE)
+
+lambda = bcTransform$x[which(bcTransform$y == max(bcTransform$y))] 
+dow.bc = (1/lambda)*(dow$DJIA^lambda-1)
+BoxCox_var= var(dow.bc)
+
+# Log Transformation
+y.log <- log(dow.ts) 
+Log_var= var(y.log)
+
+# Square Root Transformation
+y.sqrt <- sqrt(dow.ts) 
+SqRt_var= var(y.sqrt)
+
+Original_var= var(dow.ts)
+cbind(Original_var, BoxCox_var, Log_var, SqRt_var)
+
+#We now plot the transformed time-series:
+op <- par(mfrow = c(1,3)) 
+ts.plot(dow.bc,main = "Box-Cox")
+ts.plot(y.log,main = "Log")
+ts.plot(y.sqrt,main = "Square Root") 
+par(op)
+```
+
+The confidence interval of the boxcox transformation does not include zero, so we do not need to use it.
+If the lambda value is equal to one, that is equivalent to using the original data, so if lambda is 1, we do not need a transformation. If lambda is 0.5, it would tell us we should use a square root transformation. Similarly, if lambda is 0, we should use natural log.
+
+The confidence interval for the optimal lambda includes 1, which tells us that no transformation is necessary. 
+
+After applying multiple transformation, we select the log transformation because we find that it results in the smallest variance. 
+
+Find the optimal differencing for transformed log data:
+```{r}
+# Difference lag 365 to remove seasonality
+log.ts.diff365<-diff(y.log,lag=365)
+plot.ts(log.ts.diff365, main= expression(nabla[365]~Y[t]))
+original_var= var(dow.ts)
+diff365_var= var(log.ts.diff365)
+diff365_var > original_var # Is FALSE thus we continue
+
+# Difference lag 91 to remove seasonality
+log.ts.diff91<-diff(log.ts.diff365,lag=91)
+plot.ts(log.ts.diff91, main= expression(nabla[91]~nabla[365]~Y[t]))
+diff91_var= var(log.ts.diff91)
+diff91_var > diff365_var # Is TRUE thus we do not difference at lag 91
+
+# Difference lag 12
+log.ts.diff12<-diff(log.ts.diff365,lag=12)
+plot.ts(log.ts.diff12, main= expression(nabla[12]~nabla[91]~nabla[365]~Y[t]))
+diff12_var=var(log.ts.diff12)
+diff12_var > diff365_var # Is TRUE thus we do not difference at 12
+
+# Difference lag 7
+log.ts.diff7<-diff(log.ts.diff365,lag=7)
+plot.ts(log.ts.diff7, main= expression(nabla[7]~nabla[365]~Y[t]))
+diff7_var=var(log.ts.diff7)
+diff7_var > diff365_var # Is FALSE thus we difference at 7 and continue
+
+# Difference lag 1
+log.ts.diff1<-diff(log.ts.diff12,lag=1)
+plot.ts(log.ts.diff1, main= expression(nabla[1]~nabla[7]~nabla[365]~Y[t]))
+diff1_var=var(log.ts.diff1)
+diff1_var > diff7_var # Is FALSE thus we continue
+
+# Decomposition
+decompose_dow <- decompose(log.ts.diff1, type="multiplicative")
+plot(decompose_dow)
+
+qqnorm(log.ts.diff1, main = "Normal Q-Q Plot (Log)")
+qqline(log.ts.diff1)
+
+y.log.clean<-log.ts.diff1
+# Variance increases so stop here and use dat.ts.diff1 to continue
+
+cbind(original_var, diff365_var,diff91_var, diff12_var,diff7_var, diff1_var)
+```
+
+Try again with the square root transfomed data:
+```{r}
+# Difference lag 365 to remove seasonality
+sqrt.ts.diff365<-diff(y.sqrt,lag=365)
+plot.ts(sqrt.ts.diff365, main= expression(nabla[365]~Y[t]))
+original_var= var(dow.ts)
+diff365_var= var(sqrt.ts.diff365)
+diff365_var > original_var # Is FALSE thus we continue
+
+
+# Difference lag 91 to remove seasonality
+sqrt.ts.diff91<-diff(sqrt.ts.diff365,lag=91)
+plot.ts(sqrt.ts.diff91, main= expression(nabla[365]~nabla[91]~Y[t]))
+diff91_var= var(sqrt.ts.diff91)
+diff91_var > diff365_var # Is TRUE thus we do not difference at lag 91
+
+# Difference lag 12
+sqrt.ts.diff12<-diff(sqrt.ts.diff365,lag=12)
+plot.ts(sqrt.ts.diff12, main= expression(nabla[365]~nabla[91]~nabla[12]~Y[t]))
+diff12_var=var(sqrt.ts.diff12)
+diff12_var > diff365_var # Is TRUE thus we do not difference at 12
+
+# Difference lag 7
+sqrt.ts.diff7<-diff(sqrt.ts.diff365,lag=7)
+plot.ts(sqrt.ts.diff7, main= expression(nabla[365]~nabla[91]~nabla[12]~nabla[7]~Y[t]))
+diff7_var=var(sqrt.ts.diff7)
+diff7_var > diff365_var # Is FALSE thus we difference at 7 and continue
+
+# Difference lag 1
+sqrt.ts.diff1<-diff(sqrt.ts.diff12,lag=1)
+plot.ts(sqrt.ts.diff1, main= expression(nabla[365]~nabla[12]~nabla[7]~nabla[1]~Y[t]))
+diff1_var=var(sqrt.ts.diff1)
+diff1_var > diff7_var # Is FALSE thus we continue
+
+# Decomposition
+decompose_dow <- decompose(sqrt.ts.diff1, type="multiplicative")
+plot(decompose_dow)
+
+qqnorm(sqrt.ts.diff1, main = "Normal Q-Q Plot (Sqrt)")
+qqline(sqrt.ts.diff1)
+
+y.sqrt.clean<-sqrt.ts.diff1
+# Variance increases so stop here and use dat.ts.diff1 to continue
+
+cbind(original_var, diff365_var,diff91_var, diff12_var,diff7_var, diff1_var)
+
+```
+
+
+
+The line shows that the mean is constant around 0, so we can say that the data is stationary.
+Variance....
+
+
+After trying both log and square root transformations, we find that the original data has the best looking 
+```{r}
+par(mfrow=c(1,3))
+qqnorm(y.original.clean, main = "Normal QQ Plot (Original)")
+qqline(y.original.clean)
+
+qqnorm(y.log.clean, main = "Normal QQ Plot (Log)")
+qqline(y.log.clean)
+
+qqnorm(y.sqrt.clean, main = "Normal QQ Plot (Sqrt)")
+qqline(y.sqrt.clean)
+
+```
+
+Model Identification:
+```{r}
+# Identify model from acf and pacf plots of Transformed, Differenced Data
+dat.clean=y.original.clean
+par(mfrow=c(1,2))
+acf(dat.clean, lag.max = 20, main = " ")
+pacf(dat.clean, lag.max = 20, main = " ")
+title(expression(paste(nabla[365]~nabla[12]~nabla[1]~nabla~Y[t], sep = " ")), line = -1, outer=TRUE)
+```
+
+Possible models: ARMA(0.048), MA(0.048), AR(0.048), AR(0.004), and MA(0.004) Values are decimals due to being in year scale. Thus if we scale to days we would have ~ ARMA(12), MA(12), AR(12) and AR(1), MA(1). This was found by multiplying our decimal lag values by 260, the frequency of data collection per year. We will also apply auto arima and compare its results to our own.
+
+
+```{r}
+library(gridExtra)
+library(forecast)
+auto <- auto.arima(dat.clean)
+arma.12<-arima(dat.clean,order=c(12,0,12), method = "ML")
+ma.12<-arima(dat.clean,order=c(0,0,12), method = "ML")
+ar.12<-arima(dat.clean,order=c(12,0,0), method = "ML")
+ar.1<-arima(dat.clean,order=c(1,0,0), method = "ML")
+ma.1<-arima(dat.clean,order=c(0,0,1), method = "ML")
+
+
+# auto arima gives ma.1 thus we exclude ma.1 and proceed comparing the auto model
+aic.scores<-c(auto$aic,arma.12$aic,ma.12$aic,ar.12$aic,ar.1$aic)
+models<-c("MA(1)","ARMA(12)","MA(12)","AR(12)","AR(1)")
+best.model<-models[which.min(aic.scores)]
+best.model
+
+ma.12
+ar.12
+```
+
+As MA(12) has the lowest AIC score, but it doesn't pass all diagnostics checks.
+
+```{r}
+# Check Diagnostics/Assumptions
+
+# MA(12) SHAPIRO TEST DOESNT PASS
+plot(resid(ma.12), main="MA(12) Residual Plot vs. Time",ylab="MA(12) Residuals")
+qqnorm(resid(ma.12), main="MA(12) Normal Q-Q Plot of Residuals")
+qqline(resid(ma.12))
+hist(residuals(ma.12), main="MA(12) residuals")
+pred<-predict(ma.12,n.ahead = 100)
+
+Box.test(residuals(ma.12), type="Ljung-Box")
+Box.test(resid(ma.12), lag=10, type = c("Box-Pierce"), fitdf = 0)
+shapiro.test(residuals(ma.12))
+
+#ARMA(12) SHAPIRO TEST DOESNT PASS
+plot(resid(arma.12), main="ARMA(12) Residual Plot vs. Time",ylab="ARMA(12) Residuals")
+qqnorm(resid(arma.12), main="ARMA(12) Normal Q-Q Plot of Residuals")
+qqline(resid(arma.12))
+hist(residuals(arma.12), main="ARMA(12) residuals")
+pred<-predict(arma.12,n.ahead = 100)
+
+Box.test(residuals(arma.12), type="Ljung-Box")
+Box.test(resid(arma.12), lag=10, type = c("Box-Pierce"), fitdf = 0)
+shapiro.test(residuals(arma.12))
+
+#MA(1) SHAPIRO TEST DOESNT PASS
+plot(resid(ma.1), main="MA(1) Residual Plot vs. Time",ylab="MA(1) Residuals")
+qqnorm(resid(ma.1), main="MA(1) Normal Q-Q Plot of Residuals")
+qqline(resid(ma.1))
+hist(residuals(ma.1), main="MA(1) residuals")
+pred<-predict(ma.1,n.ahead = 100)
+
+Box.test(residuals(ma.1), type="Ljung-Box")
+Box.test(resid(ma.1), lag=10, type = c("Box-Pierce"), fitdf = 0)
+shapiro.test(residuals(ma.1))
+
+#AR(1)
+plot(resid(ar.1), main="AR(1) Residual Plot vs. Time",ylab="AR(1) Residuals")
+qqnorm(resid(ar.1), main="AR(1) Normal Q-Q Plot of Residuals")
+qqline(resid(ar.1))
+hist(residuals(ar.1), main="AR(1) residuals")
+pred<-predict(ar.1,n.ahead = 100)
+
+Box.test(residuals(ar.1), type="Ljung-Box")
+Box.test(resid(ar.1), lag=10, type = c("Box-Pierce"), fitdf = 0)
+shapiro.test(residuals(ar.1))
+```
+
+Best Model AR(12)
+
+```{r}
+#AR(12) SHAPIRO TEST PASSES
+plot(resid(ar.12), main="AR(12) Residual Plot vs. Time",ylab="AR(12) Residuals")
+qqnorm(resid(ar.12), main="AR(12) Normal Q-Q Plot of Residuals")
+qqline(resid(ar.12))
+hist(residuals(ar.12), main="AR(12) residuals")
+pred<-predict(ar.12,n.ahead = 100)
+
+Box.test(residuals(ar.12), type="Ljung-Box")
+Box.test(resid(ar.12), lag=10, type = c("Box-Pierce"), fitdf = 0)
+shapiro.test(residuals(ar.12))
+```
+
+Estimating coefficients of the model:
+```{r}
+ar.12$coef
+```
+
+```{r}
+# Predict 20 future observations and plot 
+mypred1 <- predict(ar.12, n.ahead = 20)
+
+ts.plot(dat.clean, xlim=c(2018,2018.45), ylim=c(-200,200), ylab = "DJIA", main="Dow Jones Index Value Forecasts")
+
+points(mypred1$pred,col="red",cex=0.8) 
+points(dowTest, cex=0.8, pch=1, col="black") 
+lines(mypred1$pred+1.96*mypred1$se,lty=2,col="blue") 
+lines(mypred1$pred-1.96*mypred1$se,lty=2,col="blue")
+
+legend("topleft", legend = c("Actual", "Forecast", "95% CI"), col=c("black","red","blue"), pch=c(1,1,15))
+```
